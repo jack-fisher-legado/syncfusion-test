@@ -5,9 +5,9 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddRazorPages();
+builder.Services.AddControllers(); 
 
 builder.Services.AddEndpointsApiExplorer();
-
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
@@ -34,7 +34,7 @@ app.UseRouting();
 app.UseAuthorization();
 
 app.MapRazorPages();
-
+app.MapControllers(); // Map controller endpoints
 app.MapProgramEndpoints();
 
 app.Run();
@@ -42,13 +42,13 @@ app.Run();
 
 public static class ProgramEndpoints
 {
-	public static void MapProgramEndpoints (this IEndpointRouteBuilder routes)
+    public static void MapProgramEndpoints(this IEndpointRouteBuilder routes)
     {
         var group = routes.MapGroup("/api/Program").WithTags(nameof(Program));
 
         group.MapGet("/", () =>
         {
-            return new [] { new Program() };
+            return new[] { new Program() };
         })
         .WithName("GetAllPrograms")
         .WithOpenApi();

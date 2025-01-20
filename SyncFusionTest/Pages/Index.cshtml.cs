@@ -21,6 +21,7 @@ namespace SyncFusionTest.Pages
 
         public IActionResult OnGet()
         {
+
             // swap out file names passed to filePath generation to test different scenarios
             var basicFileName = "sample.pdf";
             var protectedFileName = "sample-protected.pdf";
