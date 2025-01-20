@@ -50,11 +50,22 @@ namespace SyncFusionTest.Controllers
                 var x = signature.Coordinates.X;
                 var y = signature.Coordinates.Y;
 
-                var base64image = signature.Base64Graphic;
-                PaintGraphicOnDocument(loadedDocument, base64image, x, y);
+                var positionOfSignature = CalculatePageNumberByYCoordinate(loadedDocument, y);
+
+                DrawSignatureOnDocumentPage(loadedDocument, positionOfSignature.PageNumber, signature.SignerName, x, positionOfSignature.YCoordinate);
             }
 
             AddSummaryPageToEndOfDocument(loadedDocument, model.Signatures);
+
+            // save loadedDocument to wwwroot folder
+            string outputFilePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "pdfs", "output.pdf");
+            using (FileStream outputFileStream = new FileStream(outputFilePath, FileMode.Create, FileAccess.Write))
+            {
+                loadedDocument.Save(outputFileStream);
+            }
+            loadedDocument.Close(true);
+
+            return Ok(new { message = "File processed successfully" });
 
             #region local functions 
 
@@ -100,37 +111,19 @@ namespace SyncFusionTest.Controllers
 
             void PaintGraphicOnDocument(PdfLoadedDocument document, string base64image, float x, float y)
             {
-                // First determine what page the graphic is to be painted on
-                float cumulativeHeight = 0;
-                int targetPageIndex = -1;
-                float pageSpecificY = y;
-
-                for (int i = 0; i < loadedDocument.Pages.Count; i++)
-                {
-                    PdfPageBase page = loadedDocument.Pages[i];
-                    float pageHeight = page.Size.Height;
-
-                    if (pageSpecificY <= pageHeight + cumulativeHeight)
-                    {
-                        targetPageIndex = i;
-                        pageSpecificY = pageSpecificY - cumulativeHeight;
-                        break;
-                    }
-
-                    cumulativeHeight += pageHeight;
-                }
+                var positionOfGraphic = CalculatePageNumberByYCoordinate(document, y);
 
                 // if we have successfully determined a page based on global coordinates, we can append the graphic here
-                if (targetPageIndex != -1)
+                if (positionOfGraphic.PageNumber != -1)
                 {
-                    PdfLoadedPage targetPage = loadedDocument.Pages[targetPageIndex] as PdfLoadedPage;
+                    PdfLoadedPage targetPage = loadedDocument.Pages[positionOfGraphic.PageNumber] as PdfLoadedPage;
                     PdfGraphics graphics = targetPage.Graphics;
 
                     byte[] imageBytes = Convert.FromBase64String(base64image);
                     using (MemoryStream imageStream = new MemoryStream(imageBytes))
                     {
                         PdfBitmap image = new (imageStream);
-                        targetPage.Graphics.DrawImage(image, x, pageSpecificY);
+                        targetPage.Graphics.DrawImage(image, x, positionOfGraphic.YCoordinate);
                     }
                 }
             }
@@ -156,12 +149,9 @@ namespace SyncFusionTest.Controllers
 
                     graphics.DrawString("Signature:", font, PdfBrushes.Black, new PointF(10, yStartingPoint + 120));
 
-                    byte[] imageBytes = Convert.FromBase64String(signature.Base64Graphic);
-                    using (MemoryStream imageStream = new MemoryStream(imageBytes))
-                    {
-                        PdfBitmap image = new(imageStream);
-                        graphics.DrawImage(image, 10, yStartingPoint + 140);
-                    }
+                    var fontSize = CalculateFontsizeBasedOnNameLength(signature.SignerName);
+                    PdfFont signatureFont = new PdfStandardFont(PdfFontFamily.Helvetica, fontSize);
+                    graphics.DrawString(signature.SignerName, signatureFont, PdfBrushes.Black, new PointF(100, yStartingPoint + 120));
 
                     yStartingPoint = yStartingPoint + 200;
                 }
@@ -174,9 +164,62 @@ namespace SyncFusionTest.Controllers
                 loadedPage.Graphics.DrawString(text, font, PdfBrushes.Black, new PointF(x, y));
             }
 
+            void DrawSignatureOnDocumentPage(PdfLoadedDocument document, int pageNumber, string signerName, float x, float y)
+            {
+                PdfLoadedPage? loadedPage = loadedDocument.Pages[pageNumber] as PdfLoadedPage;
+                var fontSize = CalculateFontsizeBasedOnNameLength(signerName);
+                PdfFont font = new PdfStandardFont(PdfFontFamily.Helvetica, fontSize);
+                loadedPage.Graphics.DrawString(signerName, font, PdfBrushes.Black, new PointF(x, y));
+            }
+
+            int CalculateFontsizeBasedOnNameLength(string name)
+            {
+                // font should be smaller for long names
+                int defaultFontSize = 32;
+                int minFontSize = 12;
+                int maxNameLength = 20;
+
+                if (name.Length <= maxNameLength)
+                {
+                    return defaultFontSize;
+                }
+
+                int fontSize = defaultFontSize - (name.Length - maxNameLength);
+                return fontSize < minFontSize ? minFontSize : fontSize;
+            }
+
+            SignaturePosition CalculatePageNumberByYCoordinate(PdfLoadedDocument document, float yCoordinate)
+            {
+                // First determine what page the graphic is to be painted on
+                float cumulativeHeight = 0;
+                int targetPageIndex = -1;
+                float pageSpecificY = yCoordinate;
+
+                for (int i = 0; i < loadedDocument.Pages.Count; i++)
+                {
+                    PdfPageBase page = loadedDocument.Pages[i];
+                    float pageHeight = page.Size.Height;
+
+                    if (pageSpecificY <= pageHeight + cumulativeHeight)
+                    {
+                        targetPageIndex = i;
+                        pageSpecificY = pageSpecificY - cumulativeHeight;
+                        break;
+                    }
+
+                    cumulativeHeight += pageHeight;
+                }
+
+                return new SignaturePosition()
+                {
+                    PageNumber = targetPageIndex,
+                    YCoordinate = pageSpecificY
+                };
+            }
+
             #endregion
 
-            return Ok(new { message = "File processed successfully" });
+        
         }
     }
 
@@ -189,7 +232,7 @@ namespace SyncFusionTest.Controllers
 
     public class Signature
     {
-        public required string Base64Graphic { get; set; }
+        public required string SignerName { get; set; }
         // Potentially a page number in here too, to be decided...
         public required Coordinate Coordinates { get; set; }
         public int SignerId { get; set; }
@@ -200,5 +243,11 @@ namespace SyncFusionTest.Controllers
     {
         public int X { get; set; }
         public int Y { get; set; }
+    }
+
+    public class SignaturePosition
+    {
+        public int PageNumber { get; set; }
+        public float YCoordinate { get; set; }
     }
 }
