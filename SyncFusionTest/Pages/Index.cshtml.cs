@@ -22,10 +22,10 @@ namespace SyncFusionTest.Pages
         public IActionResult OnGet()
         {
             // swap out file names passed to filePath generation to test different scenarios
-            var basicFileName = "sample";
-            var protectedFileName = "sample-protected";
-            var readOnlyFileName = "sample-read-only";
-            var multiPageFileName = "sample-multi-page";
+            var basicFileName = "sample.pdf";
+            var protectedFileName = "sample-protected.pdf";
+            var readOnlyFileName = "sample-read-only.pdf";
+            var multiPageFileName = "sample-multi-page.pdf";
 
             string filePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "pdfs", multiPageFileName);
 
