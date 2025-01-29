@@ -7,6 +7,11 @@ using Syncfusion.Pdf.Parsing;
 using Syncfusion.Pdf;
 using Syncfusion.Drawing;
 using System.Reflection.Metadata;
+using Syncfusion.Pdf.Redaction;
+using Microsoft.CodeAnalysis.Text;
+using FontStyle = Syncfusion.Drawing.FontStyle;
+using RectangleF = Syncfusion.Drawing.RectangleF;
+using System;
 
 namespace SyncFusionTest.Pages
 {
@@ -27,21 +32,28 @@ namespace SyncFusionTest.Pages
             var protectedFileName = "sample-protected.pdf";
             var readOnlyFileName = "sample-read-only.pdf";
             var multiPageFileName = "sample-multi-page.pdf";
+            var templateFileName = "sample-template.pdf";
 
-            string filePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "pdfs", multiPageFileName);
+            string filePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "pdfs", templateFileName);
 
             var pdfData = System.IO.File.ReadAllBytes(filePath);
             PdfLoadedDocument? loadedDocument = LoadDocument(filePath);
 
-            var x = 100;
-            var y = 1000;
+            var x = 0;
+            var y = 0;
             var width = 50;
             var height = 50;
             var pageNumber = 0;
 
             string imagePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "images", "example.jpg");
+
+            FillTemplatesWithData(loadedDocument, "{{addressLine1}}", "43 Argyle House");
+            FillTemplatesWithData(loadedDocument, "{{addressLine2}}", "Codebase");
+            FillTemplatesWithData(loadedDocument, "{{addressCity}}", "Edinburgh");
+            FillTemplatesWithData(loadedDocument, "{{addressPostCode}}", "EH1 1AA");
+            FillTemplatesWithData(loadedDocument, "{{firstName}}", "Jackthisisasuperlongnameandwhoknowsjusthowlongitwillbereally");
             
-            PaintGraphicOnDocument(loadedDocument, imagePath, x, y, width, height);
+           // PaintGraphicOnDocument(loadedDocument, imagePath, x, y, width, height);
 
             AddSummaryPageToEndOfDocument(loadedDocument, imagePath);
 
@@ -68,6 +80,113 @@ namespace SyncFusionTest.Pages
                     // this is a password protected document
                     return null;
                 }
+            }
+
+            PdfLoadedDocument FillTemplatesWithData(PdfLoadedDocument loadedDocument, string replace, string with)
+            {
+                Dictionary<int, List<RectangleF>> matchedTextbounds = new Dictionary<int, List<RectangleF>>();
+
+                loadedDocument.FindText(replace, out matchedTextbounds);
+
+                // Loop through each instance of the matched text we are replacing
+                // we are removing any sentences that are empty strings with this Where clause
+                foreach (KeyValuePair<int, List<RectangleF>> matchedText in matchedTextbounds.Where(x => x.Value.Count > 0))
+                {
+                    int pageIndex = matchedText.Key; 
+
+                    List<RectangleF> listOfBoxesContainingMatchedText = matchedText.Value;
+                   
+
+                    PdfLoadedPage pageReplaceTextIsOn = loadedDocument.Pages[pageIndex] as PdfLoadedPage;
+                    float pageWidth = pageReplaceTextIsOn.Size.Width;
+                    float pageHeight = pageReplaceTextIsOn.Size.Height;
+
+                    pageReplaceTextIsOn.ExtractText(out Syncfusion.Pdf.TextLineCollection textLineCollection);
+
+                    var bounds = textLineCollection.TextLine[0].Bounds;
+
+                    // if we want to support custom fonts, we need to have a path to them available...
+                    //PdfFont pdfFont = new PdfTrueTypeFont(@"../../ARIALUNI.ttf", 24);
+
+                    // Now, you can work with the page as needed.
+                    for (int j = 0; j < listOfBoxesContainingMatchedText.Count; j++)
+                    {
+                        var thisTextsBox = listOfBoxesContainingMatchedText[j];
+                        var matchedLine = textLineCollection.TextLine.FirstOrDefault(t => t.Text.Contains(replace));
+
+                        if (matchedLine != null)
+                        {
+                            var fontSize = matchedLine.FontSize;
+                            var fontName = matchedLine.FontName;
+                            var fontStyle = matchedLine.FontStyle;
+
+                            var font = GetPdfFont(fontName, fontSize, fontStyle);
+
+
+                            // Detect text alignment based on bounding box
+                            PdfStringFormat format = new PdfStringFormat();
+                            if (Math.Abs(thisTextsBox.X) < 5)
+                                format.Alignment = PdfTextAlignment.Left;  // Left-aligned
+                            else if (Math.Abs(thisTextsBox.X + thisTextsBox.Width - pageWidth) < 5)
+                                format.Alignment = PdfTextAlignment.Right; // Right-aligned
+                            else if (Math.Abs(thisTextsBox.X - (pageWidth - thisTextsBox.Width) / 2) < 5)
+                                format.Alignment = PdfTextAlignment.Center; // Centre-aligned
+
+                            //format.Alignment = PdfTextAlignment.Right;
+
+                            loadedDocument.FindText(matchedLine.Text, out var thisLineOfTextsBounds);
+
+                            var newLineText = matchedLine.Text.Replace(replace, with);
+
+                            // Apply redaction with correct font
+                            PdfRedaction redaction = new PdfRedaction(thisLineOfTextsBounds.First().Value[0], Color.Transparent);
+
+                            // TODO - accurately line up the Y axis for the replacement string with the Y axis of the rest of the sentence (regardless of font, size etc.)
+                            redaction.Appearance.Graphics.DrawString(newLineText, font, PdfBrushes.Black, new PointF() { X = 0, Y = 0 }, format);
+
+                            //redaction.Appearance.Graphics.DrawString(with, font, PdfBrushes.Black, new RectangleF(0, 0, pageWidth, pageHeight), format);
+
+                            pageReplaceTextIsOn.AddRedaction(redaction);
+                        }
+                    }
+                }
+
+                //Apply redaction.
+                loadedDocument.Redact();
+                return loadedDocument;
+            }
+
+            PdfFont GetPdfFont(string fontName, float fontSize, FontStyle style)
+            {
+                PdfFontFamily pdfFontFamily = PdfFontFamily.Helvetica; // Default
+
+                // Map common font names to Syncfusion's standard PDF fonts
+                switch (fontName.ToLower())
+                {
+                    case "arial":
+                    case "helvetica":
+                        pdfFontFamily = PdfFontFamily.Helvetica;
+                        break;
+                    case "times new roman":
+                    case "times":
+                        pdfFontFamily = PdfFontFamily.TimesRoman;
+                        break;
+                    case "courier":
+                    case "courier new":
+                        pdfFontFamily = PdfFontFamily.Courier;
+                        break;
+                    default:
+                        break;
+                }
+
+                // Convert FontStyle to Syncfusion's style
+                PdfFontStyle pdfStyle = PdfFontStyle.Regular;
+                if (style.HasFlag(FontStyle.Bold)) pdfStyle |= PdfFontStyle.Bold;
+                if (style.HasFlag(FontStyle.Italic)) pdfStyle |= PdfFontStyle.Italic;
+                if (style.HasFlag(FontStyle.Underline)) pdfStyle |= PdfFontStyle.Underline;
+                if (style.HasFlag(FontStyle.Strikeout)) pdfStyle |= PdfFontStyle.Strikeout;
+
+                return new PdfStandardFont(pdfFontFamily, fontSize, pdfStyle);
             }
 
             void PaintGraphicOnDocumentPage(PdfLoadedDocument document, int pageNumber, string imagePath, float x, float y, float width, float height)
